@@ -2,60 +2,84 @@ import streamlit as st
 import cv2
 import numpy as np
 import os
-from streamlit_webrtc import webrtc_streamer, VideoTransformerBase
-from utils import get_parking_spots_bboxes, empty_or_not
+import time
+from utils import get_parking_spots_bboxes, empty_or_not 
 
 st.set_page_config(page_title="Parking Detector", layout="wide")
 st.title("🚗 Real-Time Parking Detection")
 
-# Load your static files
+# Setup paths
+video_path = "compressed_video.mp4"
 mask_path = "mask.png"
+
+# Basic error checking
 if not os.path.exists(mask_path):
-    st.error("Missing mask.png")
+    st.error("❌ Error: mask.png not found.")
     st.stop()
 
+# Initialize data only once
 mask = cv2.imread(mask_path, 0)
 connected_components = cv2.connectedComponentsWithStats(mask, 4, cv2.CV_32S)
 spots = get_parking_spots_bboxes(connected_components)
+spots_status = [True for _ in spots]
+diffs = [0 for _ in spots]
 
-class ParkingProcessor(VideoTransformerBase):
-    def __init__(self):
-        self.spots_status = [True for _ in spots]
-        self.frame_nmr = 0
-        self.previous_frame = None
-        self.diffs = [0 for _ in spots]
+# Create UI placeholders outside the loop
+st_status = st.empty()
+st_frame = st.empty()
 
-    def transform(self, frame):
-        # Convert the WebRTC frame to a standard OpenCV image
-        img = frame.to_ndarray(format="bgr24")
-        
-        # Detection Logic (Every 30 frames)
-        if self.frame_nmr % 30 == 0:
-            if self.previous_frame is not None:
+if st.button("Start Detection"):
+    cap = cv2.VideoCapture(video_path)
+    previous_frame = None
+    frame_nmr = 0
+    step = 30  
+    
+    while cap.isOpened():
+        ret, frame = cap.read()
+        if not ret:
+            cap.set(cv2.CAP_PROP_POS_FRAMES, 0) # Loop the video
+            continue
+
+        # --- Detection Logic (Every 30 frames) ---
+        if frame_nmr % step == 0:
+            if previous_frame is not None:
                 for idx, spot in enumerate(spots):
                     x1, y1, w, h = spot
-                    # Calculate difference to see if spot needs re-checking
-                    diff = np.abs(np.mean(img[y1:y1+h, x1:x1+w]) - np.mean(self.previous_frame[y1:y1+h, x1:x1+w]))
-                    self.diffs[idx] = diff
+                    # Calculate pixel difference to see if spot needs re-checking
+                    diff = np.abs(np.mean(frame[y1:y1+h, x1:x1+w]) - np.mean(previous_frame[y1:y1+h, x1:x1+w]))
+                    diffs[idx] = diff
 
-                max_d = np.amax(self.diffs) if np.amax(self.diffs) > 0 else 1
-                arr_ = [j for j in range(len(spots)) if self.diffs[j] / max_d > 0.4] if self.previous_frame is not None else range(len(spots))
+                max_d = np.amax(diffs) if np.amax(diffs) > 0 else 1
+                arr_ = [j for j in range(len(spots)) if diffs[j] / max_d > 0.4]
                 
                 for spot_indx in arr_:
                     x1, y1, w, h = spots[spot_indx]
-                    # Call your model logic from utils.py
-                    self.spots_status[spot_indx] = empty_or_not(img[y1:y1+h, x1:x1+w])
+                    spots_status[spot_indx] = empty_or_not(frame[y1:y1+h, x1:x1+w])
             
-            self.previous_frame = img.copy()
+            # Initial detection on first frame
+            if previous_frame is None:
+                for i in range(len(spots)):
+                    x1, y1, w, h = spots[i]
+                    spots_status[i] = empty_or_not(frame[y1:y1+h, x1:x1+w])
+            
+            previous_frame = frame.copy()
 
-        # Draw the overlays directly on the frame
+        # --- Drawing Overlays ---
         for idx, spot in enumerate(spots):
             x1, y1, w, h = spot
-            color = (0, 255, 0) if self.spots_status[idx] else (0, 0, 255)
-            cv2.rectangle(img, (x1, y1), (x1+w, y1+h), color, 2)
-            
-        self.frame_nmr += 1
-        return img
+            color = (0, 255, 0) if spots_status[idx] else (0, 0, 255)
+            cv2.rectangle(frame, (x1, y1), (x1+w, y1+h), color, 2)
 
-# This replaces the while loop and the 'Start' button
-webrtc_streamer(key="parking-detection", video_transformer_factory=ParkingProcessor)
+        # --- UI Updates ---
+        available_count = sum(spots_status)
+        st_status.markdown(f"### Available Spots: **{available_count} / {len(spots)}**")
+        
+        # Display the frame in the placeholder
+        frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+        st_frame.image(frame_rgb, channels="RGB")
+        
+        # Small delay to keep the browser responsive
+        time.sleep(0.01)
+        frame_nmr += 1
+
+    cap.release()
