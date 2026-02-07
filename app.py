@@ -30,7 +30,7 @@ diffs = [None for j in spots]
 previous_frame = None
 frame_nmr = 0
 step = 30  
-ret = True
+display_step = 2 # Show every 2nd frame to reduce browser load
 
 st_frame = st.empty()
 st_status = st.empty()
@@ -43,16 +43,16 @@ if st.button("Start Detection"):
         
         if not ret:
             cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
-            ret, frame = cap.read()
-
-        if frame_nmr % step == 0 and previous_frame is not None:
-            for spot_indx, spot in enumerate(spots):
-                x1, y1, w, h = spot
-                spot_crop = frame[y1:y1 + h, x1:x1 + w, :]
-                prev_crop = previous_frame[y1:y1 + h, x1:x1 + w, :]
-                diffs[spot_indx] = np.abs(np.mean(spot_crop) - np.mean(prev_crop))
+            continue
 
         if frame_nmr % step == 0:
+            if previous_frame is not None:
+                for spot_indx, spot in enumerate(spots):
+                    x1, y1, w, h = spot
+                    spot_crop = frame[y1:y1 + h, x1:x1 + w, :]
+                    prev_crop = previous_frame[y1:y1 + h, x1:x1 + w, :]
+                    diffs[spot_indx] = np.abs(np.mean(spot_crop) - np.mean(prev_crop))
+
             if previous_frame is None:
                 arr_ = range(len(spots))
             else:
@@ -63,26 +63,25 @@ if st.button("Start Detection"):
                 spot = spots[spot_indx]
                 x1, y1, w, h = spot
                 spot_crop = frame[y1:y1 + h, x1:x1 + w, :]
-                spot_status = empty_or_not(spot_crop)
-                spots_status[spot_indx] = spot_status
+                spots_status[spot_indx] = empty_or_not(spot_crop)
             
             previous_frame = frame.copy()
 
-        for spot_indx, spot in enumerate(spots):
-            status = spots_status[spot_indx]
-            if status is None: continue
-            
-            x1, y1, w, h = spot
-            color = (0, 255, 0) if status else (0, 0, 255)
-            cv2.rectangle(frame, (x1, y1), (x1 + w, y1 + h), color, 2)
+        if frame_nmr % display_step == 0:
+            for spot_indx, spot in enumerate(spots):
+                status = spots_status[spot_indx]
+                if status is None: continue
+                
+                x1, y1, w, h = spot
+                color = (0, 255, 0) if status else (0, 0, 255)
+                cv2.rectangle(frame, (x1, y1), (x1 + w, y1 + h), color, 2)
 
-        available_count = sum([1 for s in spots_status if s is True])
-        st_status.markdown(f"### Available Spots: **{available_count} / {len(spots)}**")
+            available_count = sum([1 for s in spots_status if s is True])
+            st_status.markdown(f"### Available Spots: **{available_count} / {len(spots)}**")
 
-        frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-        st_frame.image(frame_rgb, channels="RGB")
+            frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+            st_frame.image(frame_rgb, channels="RGB")
         
-        time.sleep(0.01)
         frame_nmr += 1
 
     cap.release()
