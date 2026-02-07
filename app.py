@@ -89,7 +89,7 @@ if st.button("Start Detection"):
             if spot_status: # Available
                 color = (0, 255, 0) # Green
             else: # Occupied
-                color = (255, 0, 0) # Red
+                color = ( 0, 0,255) # Red
             
             cv2.rectangle(frame, (x1, y1), (x1 + w, y1 + h), color, 2)
 
