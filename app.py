@@ -14,7 +14,7 @@ st.title("🚗 Real-Time Parking Detection")
 st.sidebar.header("Configuration")
 
 
-video_path = "parking_loop.mp4"
+video_path = "compressed_video.mp4"
 mask_path = "mask.png"
 model_path = "model.p"
 
