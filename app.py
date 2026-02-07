@@ -4,22 +4,21 @@ import numpy as np
 import pickle
 import os
 
-# Import your existing functions from utils.py
+
 from utils import get_parking_spots_bboxes, empty_or_not 
 
-# --- PAGE CONFIG ---
 st.set_page_config(page_title="Parking Detector", layout="wide")
 st.title("🚗 Real-Time Parking Detection")
 
-# --- SIDEBAR & SETUP ---
+
 st.sidebar.header("Configuration")
 
-# Define paths (These must match your GitHub filenames)
-video_path = "parking_1920_1080_loop.mp4"
-mask_path = "mask_1920_1080.png"
+
+video_path = "parking_loop.mp4"
+mask_path = "mask.png"
 model_path = "model.p"
 
-# Check if files exist (Debugging for Cloud Deployment)
+
 if not os.path.exists(mask_path):
     st.error(f"❌ Error: Mask file '{mask_path}' not found.")
     st.stop()
@@ -27,13 +26,12 @@ if not os.path.exists(model_path):
     st.error(f"❌ Error: Model file '{model_path}' not found.")
     st.stop()
 
-# --- LOAD RESOURCES ---
-# Load Mask
+
+
 mask = cv2.imread(mask_path, 0)
-# Load Video
+
 cap = cv2.VideoCapture(video_path)
 
-# Initialize Variables (Logic from your main.py)
 connected_components = cv2.connectedComponentsWithStats(mask, 4, cv2.CV_32S)
 spots = get_parking_spots_bboxes(connected_components)
 spots_status = [None for j in spots]
@@ -44,11 +42,11 @@ frame_nmr = 0
 step = 30  # Process every 30 frames
 ret = True
 
-# Create Streamlit placeholders
+
 st_frame = st.empty()
 st_status = st.empty()
 
-# --- START BUTTON ---
+
 if st.button("Start Detection"):
     while ret:
         ret, frame = cap.read()
@@ -59,7 +57,6 @@ if st.button("Start Detection"):
             ret = True
             continue
 
-        # --- YOUR LOGIC (Adapted from main.py) ---
         if frame_nmr % step == 0 and previous_frame is not None:
             for spot_indx, spot in enumerate(spots):
                 x1, y1, w, h = spot
@@ -84,7 +81,7 @@ if st.button("Start Detection"):
         if frame_nmr % step == 0:
             previous_frame = frame.copy()
 
-        # --- DRAWING ---
+      
         for spot_indx, spot in enumerate(spots):
             spot_status = spots_status[spot_indx]
             x1, y1, w, h = spots[spot_indx]
