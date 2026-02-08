@@ -2,23 +2,23 @@ import streamlit as st
 import cv2
 import numpy as np
 import os
-import tempfile
 from utils import get_parking_spots_bboxes, empty_or_not
 
 st.set_page_config(page_title="Parking Detector", layout="centered")
 st.title("🚗 High-Quality Parking Detection")
 
 # --- PATHS ---
-input_video_path = "compressed_video.mp4" # Ensure this file exists
+# Make sure this matches the file you uploaded (e.g., parking_short.mp4)
+input_video_path = "compressed_video.mp4" 
 mask_path = "mask.png"
-output_video_path = "output_processed.mp4"
+output_video_path = "final_output.mp4"
 
 # --- CHECK FILES ---
 if not os.path.exists(mask_path):
-    st.error("❌ mask.png not found!")
+    st.error("❌ mask.png not found! Please upload it to GitHub.")
     st.stop()
 if not os.path.exists(input_video_path):
-    st.error(f"❌ Video {input_video_path} not found!")
+    st.error(f"❌ Video file '{input_video_path}' not found! Check your filename on GitHub.")
     st.stop()
 
 # --- LOAD MASK ---
@@ -27,7 +27,7 @@ connected_components = cv2.connectedComponentsWithStats(mask, 4, cv2.CV_32S)
 spots = get_parking_spots_bboxes(connected_components)
 
 # --- APP LOGIC ---
-st.markdown("### Click below to process the video and watch the smooth result.")
+st.markdown("### Click below to process.")
 
 if st.button("🎬 Process & Play Video"):
     # Open Video
@@ -37,11 +37,16 @@ if st.button("🎬 Process & Play Video"):
     fps = int(cap.get(cv2.CAP_PROP_FPS))
     total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
 
-    # Setup Video Writer (to save the result)
-    # H.264 is needed for web, but OpenCV writes .mp4 easily. 
-    # If this fails on Cloud, we will try 'avc1'
-    fourcc = cv2.VideoWriter_fourcc(*'mp4v') 
+    # --- VIDEO WRITER SETUP ---
+    # We try 'avc1' (H.264) first because it works in browsers natively.
+    # If that fails, we fall back to 'mp4v'.
+    fourcc = cv2.VideoWriter_fourcc(*'avc1') 
     out = cv2.VideoWriter(output_video_path, fourcc, fps, (width, height))
+    
+    # If avc1 fails to initialize, fall back to mp4v
+    if not out.isOpened():
+        fourcc = cv2.VideoWriter_fourcc(*'mp4v')
+        out = cv2.VideoWriter(output_video_path, fourcc, fps, (width, height))
 
     # Progress Bar
     progress_bar = st.progress(0)
@@ -58,7 +63,7 @@ if st.button("🎬 Process & Play Video"):
         if not ret:
             break
 
-        # --- DETECTION LOGIC (Same as before) ---
+        # --- DETECTION LOGIC ---
         if frame_nmr % step == 0:
             if previous_frame is not None:
                 for idx, spot in enumerate(spots):
@@ -83,12 +88,12 @@ if st.button("🎬 Process & Play Video"):
             color = (0, 255, 0) if spots_status[idx] else (0, 0, 255)
             cv2.rectangle(frame, (x1, y1), (x1+w, y1+h), color, 2)
 
-        # --- SAVE FRAME TO FILE ---
+        # Write to file
         out.write(frame)
 
-        # Update Progress
+        # Update Progress Bar (Every 10 frames)
         frame_nmr += 1
-        if frame_nmr % 10 == 0: # Update bar every 10 frames to save speed
+        if frame_nmr % 10 == 0:
             progress_bar.progress(min(frame_nmr / total_frames, 1.0))
             status_text.text(f"Processing frame {frame_nmr}/{total_frames}...")
 
@@ -98,12 +103,19 @@ if st.button("🎬 Process & Play Video"):
     progress_bar.empty()
     status_text.empty()
 
-    # --- RE-ENCODE FOR BROWSER (CRITICAL STEP) ---
-    # OpenCV creates MP4s that browsers sometimes hate. 
-    # We use ffmpeg (installed on Streamlit Cloud) to fix it.
-    st.info("Optimizing video for web playback...")
-    os.system(f"ffmpeg -y -i {output_video_path} -vcodec libx264 final_output.mp4")
-
-    # --- PLAY VIDEO ---
-    st.success("✅ Processing Complete! Watch below:")
-    st.video("final_output.mp4")
+    # --- FINAL CHECK AND PLAY ---
+    if os.path.exists(output_video_path):
+        st.success("✅ Processing Complete!")
+        # We try to convert with ffmpeg ONLY if it's installed, otherwise play raw
+        if os.system("ffmpeg -version") == 0:
+            temp_name = "temp_ffmpeg.mp4"
+            os.system(f"ffmpeg -y -i {output_video_path} -vcodec libx264 {temp_name}")
+            if os.path.exists(temp_name):
+                st.video(temp_name)
+            else:
+                st.video(output_video_path)
+        else:
+            # Fallback: Just play what we have
+            st.video(output_video_path)
+    else:
+        st.error("❌ Failed to save video file. Please check permissions.")
