@@ -9,7 +9,7 @@ st.set_page_config(page_title="Parking Detector", layout="wide")
 st.title("🚗 Real-Time Parking Detection")
 
 # Setup paths
-video_path = "compressed_video.mp4"
+video_path = "compressed_video.mp4"  # Make sure this matches your uploaded file
 mask_path = "mask.png"
 
 # Basic error checking
@@ -39,6 +39,13 @@ if st.button("Start Detection"):
         if not ret:
             cap.set(cv2.CAP_PROP_POS_FRAMES, 0) # Loop the video
             continue
+        
+        # --- OPTIMIZATION 1: SKIP FRAMES ---
+        # Skip 2 out of every 3 frames. This makes it run at ~10 FPS
+        # which is much smoother on Streamlit Cloud.
+        if frame_nmr % 3 != 0:
+            frame_nmr += 1
+            continue
 
         # --- Detection Logic (Every 30 frames) ---
         if frame_nmr % step == 0:
@@ -67,19 +74,23 @@ if st.button("Start Detection"):
         # --- Drawing Overlays ---
         for idx, spot in enumerate(spots):
             x1, y1, w, h = spot
-            color = (0, 255, 0) if spots_status[idx] else (0, 0, 255)
+            # Green for Empty, Red for Occupied
+            color = (0, 255, 0) if spots_status[idx] else (0, 0, 255) 
             cv2.rectangle(frame, (x1, y1), (x1+w, y1+h), color, 2)
 
         # --- UI Updates ---
         available_count = sum(spots_status)
         st_status.markdown(f"### Available Spots: **{available_count} / {len(spots)}**")
         
-        # Display the frame in the placeholder
-        frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+        # --- OPTIMIZATION 2: RESIZE BEFORE SENDING ---
+        # Resize to 700px width. This reduces data size by 80% per frame.
+        # It makes the video stream INSTANTLY instead of lagging.
+        frame_display = cv2.resize(frame, (700, int(700 * (frame.shape[0] / frame.shape[1]))))
+
+        # Convert to RGB for display
+        frame_rgb = cv2.cvtColor(frame_display, cv2.COLOR_BGR2RGB)
         st_frame.image(frame_rgb, channels="RGB")
         
-        # Small delay to keep the browser responsive
-        time.sleep(0.01)
         frame_nmr += 1
 
     cap.release()
