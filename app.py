@@ -2,95 +2,108 @@ import streamlit as st
 import cv2
 import numpy as np
 import os
-import time
-from utils import get_parking_spots_bboxes, empty_or_not 
+import tempfile
+from utils import get_parking_spots_bboxes, empty_or_not
 
-st.set_page_config(page_title="Parking Detector", layout="wide")
-st.title("🚗 Real-Time Parking Detection")
+st.set_page_config(page_title="Parking Detector", layout="centered")
+st.title("🚗 High-Quality Parking Detection")
 
-# Setup paths
-video_path = "compressed_video.mp4"  # Make sure this matches your uploaded file
+# --- PATHS ---
+input_video_path = "compressed_video.mp4" # Ensure this file exists
 mask_path = "mask.png"
+output_video_path = "output_processed.mp4"
 
-# Basic error checking
+# --- CHECK FILES ---
 if not os.path.exists(mask_path):
-    st.error("❌ Error: mask.png not found.")
+    st.error("❌ mask.png not found!")
+    st.stop()
+if not os.path.exists(input_video_path):
+    st.error(f"❌ Video {input_video_path} not found!")
     st.stop()
 
-# Initialize data only once
+# --- LOAD MASK ---
 mask = cv2.imread(mask_path, 0)
 connected_components = cv2.connectedComponentsWithStats(mask, 4, cv2.CV_32S)
 spots = get_parking_spots_bboxes(connected_components)
-spots_status = [True for _ in spots]
-diffs = [0 for _ in spots]
 
-# Create UI placeholders outside the loop
-st_status = st.empty()
-st_frame = st.empty()
+# --- APP LOGIC ---
+st.markdown("### Click below to process the video and watch the smooth result.")
 
-if st.button("Start Detection"):
-    cap = cv2.VideoCapture(video_path)
-    previous_frame = None
-    frame_nmr = 0
-    step = 30  
+if st.button("🎬 Process & Play Video"):
+    # Open Video
+    cap = cv2.VideoCapture(input_video_path)
+    width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+    height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+    fps = int(cap.get(cv2.CAP_PROP_FPS))
+    total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+
+    # Setup Video Writer (to save the result)
+    # H.264 is needed for web, but OpenCV writes .mp4 easily. 
+    # If this fails on Cloud, we will try 'avc1'
+    fourcc = cv2.VideoWriter_fourcc(*'mp4v') 
+    out = cv2.VideoWriter(output_video_path, fourcc, fps, (width, height))
+
+    # Progress Bar
+    progress_bar = st.progress(0)
+    status_text = st.empty()
     
+    frame_nmr = 0
+    step = 30
+    previous_frame = None
+    spots_status = [True for _ in spots]
+    diffs = [0 for _ in spots]
+
     while cap.isOpened():
         ret, frame = cap.read()
         if not ret:
-            cap.set(cv2.CAP_PROP_POS_FRAMES, 0) # Loop the video
-            continue
-        
-        # --- OPTIMIZATION 1: SKIP FRAMES ---
-        # Skip 2 out of every 3 frames. This makes it run at ~10 FPS
-        # which is much smoother on Streamlit Cloud.
-        if frame_nmr % 3 != 0:
-            frame_nmr += 1
-            continue
+            break
 
-        # --- Detection Logic (Every 30 frames) ---
+        # --- DETECTION LOGIC (Same as before) ---
         if frame_nmr % step == 0:
             if previous_frame is not None:
                 for idx, spot in enumerate(spots):
                     x1, y1, w, h = spot
-                    # Calculate pixel difference to see if spot needs re-checking
                     diff = np.abs(np.mean(frame[y1:y1+h, x1:x1+w]) - np.mean(previous_frame[y1:y1+h, x1:x1+w]))
                     diffs[idx] = diff
-
-                max_d = np.amax(diffs) if np.amax(diffs) > 0 else 1
+                max_d = np.max(diffs) if np.max(diffs) > 0 else 1
                 arr_ = [j for j in range(len(spots)) if diffs[j] / max_d > 0.4]
-                
                 for spot_indx in arr_:
                     x1, y1, w, h = spots[spot_indx]
                     spots_status[spot_indx] = empty_or_not(frame[y1:y1+h, x1:x1+w])
             
-            # Initial detection on first frame
             if previous_frame is None:
                 for i in range(len(spots)):
                     x1, y1, w, h = spots[i]
                     spots_status[i] = empty_or_not(frame[y1:y1+h, x1:x1+w])
-            
             previous_frame = frame.copy()
 
-        # --- Drawing Overlays ---
+        # --- DRAWING ---
         for idx, spot in enumerate(spots):
             x1, y1, w, h = spot
-            # Green for Empty, Red for Occupied
-            color = (0, 255, 0) if spots_status[idx] else (0, 0, 255) 
+            color = (0, 255, 0) if spots_status[idx] else (0, 0, 255)
             cv2.rectangle(frame, (x1, y1), (x1+w, y1+h), color, 2)
 
-        # --- UI Updates ---
-        available_count = sum(spots_status)
-        st_status.markdown(f"### Available Spots: **{available_count} / {len(spots)}**")
-        
-        # --- OPTIMIZATION 2: RESIZE BEFORE SENDING ---
-        # Resize to 700px width. This reduces data size by 80% per frame.
-        # It makes the video stream INSTANTLY instead of lagging.
-        frame_display = cv2.resize(frame, (700, int(700 * (frame.shape[0] / frame.shape[1]))))
+        # --- SAVE FRAME TO FILE ---
+        out.write(frame)
 
-        # Convert to RGB for display
-        frame_rgb = cv2.cvtColor(frame_display, cv2.COLOR_BGR2RGB)
-        st_frame.image(frame_rgb, channels="RGB")
-        
+        # Update Progress
         frame_nmr += 1
+        if frame_nmr % 10 == 0: # Update bar every 10 frames to save speed
+            progress_bar.progress(min(frame_nmr / total_frames, 1.0))
+            status_text.text(f"Processing frame {frame_nmr}/{total_frames}...")
 
+    # Cleanup
     cap.release()
+    out.release()
+    progress_bar.empty()
+    status_text.empty()
+
+    # --- RE-ENCODE FOR BROWSER (CRITICAL STEP) ---
+    # OpenCV creates MP4s that browsers sometimes hate. 
+    # We use ffmpeg (installed on Streamlit Cloud) to fix it.
+    st.info("Optimizing video for web playback...")
+    os.system(f"ffmpeg -y -i {output_video_path} -vcodec libx264 final_output.mp4")
+
+    # --- PLAY VIDEO ---
+    st.success("✅ Processing Complete! Watch below:")
+    st.video("final_output.mp4")
